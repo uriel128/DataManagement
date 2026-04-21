@@ -37,7 +37,7 @@
                 <Insets />
             </GridPane.margin>
             <children>
-                <Label alignment="CENTER" prefHeight="114.0" prefWidth="1362.0" style="-fx-border-color: BLACK;" styleClass="login_title" text="STUDENT REGISTRATION&#10;" textAlignment="CENTER" textFill="#111386" wrapText="true">
+                <Label alignment="CENTER" prefHeight="114.0" prefWidth="1362.0" style="-fx-border-color: BLACK;" styleClass="login_title" text="CAMPUS STUDENT REGISTRY&#10;" textAlignment="CENTER" textFill="#111386" wrapText="true">
                     <font>
                         <Font name="System Bold" size="51.0" />
                     </font>
@@ -73,7 +73,7 @@
                   <Font name="System Bold" size="18.0" />
               </font>
           </Label>
-          <Button fx:id="loginBtn" alignment="CENTER" contentDisplay="CENTER" mnemonicParsing="false" onAction="#login" prefHeight="40.0" prefWidth="208.0" style="-fx-background-color: Green; -fx-border-color: BLACK;" styleClass="login_button" text="Login" textAlignment="CENTER" textFill="WHITE" GridPane.columnIndex="1" GridPane.rowIndex="5">
+          <Button fx:id="loginBtn" alignment="CENTER" contentDisplay="CENTER" mnemonicParsing="false" onAction="#login" prefHeight="40.0" prefWidth="208.0" style="-fx-background-color: Green; -fx-border-color: BLACK;" styleClass="login_button" text="Sign In" textAlignment="CENTER" textFill="WHITE" GridPane.columnIndex="1" GridPane.rowIndex="5">
               <font>
                   <Font name="System Bold" size="18.0" />
               </font>

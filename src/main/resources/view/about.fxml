@@ -7,12 +7,12 @@
 
 <AnchorPane maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity" minWidth="-Infinity" prefHeight="400.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/20.0.1" xmlns:fx="http://javafx.com/fxml/1">
    <children>
-      <TextArea layoutX="6.0" layoutY="51.0" prefHeight="343.0" prefWidth="584.0" text="Your text goes here " wrapText="true">
+      <TextArea editable="false" layoutX="6.0" layoutY="51.0" prefHeight="343.0" prefWidth="584.0" text="Campus Student Registry helps departments manage student records with validation-first forms, editable table rows, CSV import/export, and major analytics reporting.&#10;&#10;Branding direction: academic dashboard with consistent naming, status feedback, and action-oriented menus." wrapText="true">
          <font>
-            <Font name="System Bold" size="16.0" />
+            <Font name="System Bold" size="15.0" />
          </font>
       </TextArea>
-      <Label alignment="TOP_LEFT" layoutX="8.0" layoutY="11.0" prefHeight="44.0" prefWidth="542.0" text="Developer: MM mM">
+      <Label alignment="TOP_LEFT" layoutX="8.0" layoutY="11.0" prefHeight="44.0" prefWidth="542.0" text="Developer: CSC311 Project Team">
          <font>
             <Font name="System Bold" size="26.0" />
          </font>

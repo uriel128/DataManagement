@@ -2,233 +2,315 @@ package dao;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import model.Major;
 import model.Person;
 import service.MyLogger;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
 public class DbConnectivityClass {
-    final static String DB_NAME="CSC311_BD_TEMP";
-        MyLogger lg= new MyLogger();
-        final static String SQL_SERVER_URL = "jdbc:mysql://server.mariadb.database.azure.com";//update this server name
-        final static String DB_URL = "jdbc:mysql://server.mariadb.database.azure.com/"+DB_NAME;//update this database name
-        final static String USERNAME = "csc311admin@server";// update this username
-        final static String PASSWORD = "FARM";// update this password
+    private static final String DEFAULT_AZURE_JDBC = "jdbc:sqlserver://csc311server.database.windows.net:1433;database=CSC311DB;user=vasqf@csc311server;password=Uriel0128;encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;";
 
+    private final String azureJdbcUrl;
+    private final String derbyPath;
 
-        private final ObservableList<Person> data = FXCollections.observableArrayList();
+    private DatabaseMode databaseMode;
 
-        // Method to retrieve all data from the database and store it into an observable list to use in the GUI tableview.
+    private enum DatabaseMode {
+        AZURE_SQL_SERVER,
+        DERBY
+    }
 
+    public DbConnectivityClass() {
+        this.azureJdbcUrl = sanitizeConnectionString(readConfig("app.azure.jdbc", "APP_AZURE_JDBC", DEFAULT_AZURE_JDBC));
+        this.derbyPath = readConfig("app.derby.path", "APP_DERBY_PATH",
+                System.getProperty("user.home") + "/Documents/CSC311_DERBY_DB");
+        this.databaseMode = parseMode(readConfig("app.db.mode", "APP_DB_MODE", "AZURE"));
+    }
 
-        public ObservableList<Person> getData() {
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "SELECT * FROM users ";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
-                ResultSet resultSet = preparedStatement.executeQuery();
-                if (!resultSet.isBeforeFirst()) {
-                    lg.makeLog("No data");
-                }
-                while (resultSet.next()) {
-                    int id = resultSet.getInt("id");
-                    String first_name = resultSet.getString("first_name");
-                    String last_name = resultSet.getString("last_name");
-                    String department = resultSet.getString("department");
-                    String major = resultSet.getString("major");
-                    String email = resultSet.getString("email");
-                    String imageURL = resultSet.getString("imageURL");
-                    data.add(new Person(id, first_name, last_name, department, major, email, imageURL));
-                }
-                preparedStatement.close();
-                conn.close();
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
-            return data;
-        }
+    public ObservableList<Person> getData() {
+        connectToDatabase();
+        ObservableList<Person> data = FXCollections.observableArrayList();
 
+        String sql = "SELECT * FROM users";
+        try (Connection conn = openConnection();
+             PreparedStatement preparedStatement = conn.prepareStatement(sql);
+             ResultSet resultSet = preparedStatement.executeQuery()) {
 
-        public boolean connectToDatabase() {
-            boolean hasRegistredUsers = false;
-
-            try {
-                Class.forName("com.mysql.cj.jdbc.Driver");
-
-                //First, connect to MYSQL server and create the database if not created
-                Connection conn = DriverManager.getConnection(SQL_SERVER_URL, USERNAME, PASSWORD);
-                Statement statement = conn.createStatement();
-                statement.executeUpdate("CREATE DATABASE IF NOT EXISTS "+DB_NAME+"");
-                statement.close();
-                conn.close();
-
-                //Second, connect to the database and create the table "users" if cot created
-                conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                statement = conn.createStatement();
-                String sql = "CREATE TABLE IF NOT EXISTS users (" + "id INT( 10 ) NOT NULL PRIMARY KEY AUTO_INCREMENT,"
-                        + "first_name VARCHAR(200) NOT NULL," + "last_name VARCHAR(200) NOT NULL,"
-                        + "department VARCHAR(200),"
-                        + "major VARCHAR(200),"
-                        + "email VARCHAR(200) NOT NULL UNIQUE,"
-                        + "imageURL VARCHAR(200))";
-                statement.executeUpdate(sql);
-
-                //check if we have users in the table users
-                statement = conn.createStatement();
-                ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM users");
-
-                if (resultSet.next()) {
-                    int numUsers = resultSet.getInt(1);
-                    if (numUsers > 0) {
-                        hasRegistredUsers = true;
-                    }
-                }
-
-                statement.close();
-                conn.close();
-
-            } catch (Exception e) {
-                e.printStackTrace();
+            while (resultSet.next()) {
+                int id = resultSet.getInt("id");
+                String firstName = resultSet.getString("first_name");
+                String lastName = resultSet.getString("last_name");
+                String department = resultSet.getString("department");
+                Major major = Major.fromValue(resultSet.getString("major"));
+                String email = resultSet.getString("email");
+                String imageUrl = resultSet.getString("imageURL");
+                data.add(new Person(id, firstName, lastName, department, major, email, imageUrl));
             }
 
-            return hasRegistredUsers;
+        } catch (SQLException e) {
+            MyLogger.makeLog("Error loading users: " + e.getMessage());
         }
 
-        public void queryUserByLastName(String name) {
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "SELECT * FROM users WHERE last_name = ?";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
-                preparedStatement.setString(1, name);
+        return data;
+    }
 
-                ResultSet resultSet = preparedStatement.executeQuery();
+    public boolean connectToDatabase() {
+        boolean hasRegisteredUsers = false;
 
-                while (resultSet.next()) {
-                    int id = resultSet.getInt("id");
-                    String first_name = resultSet.getString("first_name");
-                    String last_name = resultSet.getString("last_name");
-                    String major = resultSet.getString("major");
-                    String department = resultSet.getString("department");
-
-                    lg.makeLog("ID: " + id + ", Name: " + first_name + " " + last_name + " "
-                            + ", Major: " + major + ", Department: " + department);
+        try {
+            ensureDriverLoaded();
+            if (databaseMode == DatabaseMode.AZURE_SQL_SERVER) {
+                hasRegisteredUsers = initAzureSchema();
+            } else {
+                hasRegisteredUsers = initDerbySchema();
+            }
+        } catch (Exception e) {
+            if (databaseMode == DatabaseMode.AZURE_SQL_SERVER) {
+                MyLogger.makeLog("Azure SQL unavailable, switching to Derby: " + e.getMessage());
+                databaseMode = DatabaseMode.DERBY;
+                try {
+                    ensureDriverLoaded();
+                    hasRegisteredUsers = initDerbySchema();
+                } catch (Exception derbyError) {
+                    MyLogger.makeLog("Derby setup failed: " + derbyError.getMessage());
                 }
-                preparedStatement.close();
-                conn.close();
-            } catch (SQLException e) {
-                e.printStackTrace();
+            } else {
+                MyLogger.makeLog("Database setup failed: " + e.getMessage());
             }
         }
 
-        public void listAllUsers() {
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "SELECT * FROM users ";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
+        return hasRegisteredUsers;
+    }
 
-                ResultSet resultSet = preparedStatement.executeQuery();
+    public int insertUser(Person person) {
+        connectToDatabase();
 
-                while (resultSet.next()) {
-                    int id = resultSet.getInt("id");
-                    String first_name = resultSet.getString("first_name");
-                    String last_name = resultSet.getString("last_name");
-                    String department = resultSet.getString("department");
-                    String major = resultSet.getString("major");
-                    String email = resultSet.getString("email");
+        if (databaseMode == DatabaseMode.AZURE_SQL_SERVER) {
+            String sql = "INSERT INTO users (first_name, last_name, department, major, email, imageURL) OUTPUT INSERTED.id VALUES (?, ?, ?, ?, ?, ?)";
+            try (Connection conn = openConnection();
+                 PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
 
-                    lg.makeLog("ID: " + id + ", Name: " + first_name + " " + last_name + " "
-                            + ", Department: " + department + ", Major: " + major + ", Email: " + email);
-                }
-
-                preparedStatement.close();
-                conn.close();
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
-        }
-
-        public void insertUser(Person person) {
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "INSERT INTO users (first_name, last_name, department, major, email, imageURL) VALUES (?, ?, ?, ?, ?, ?)";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
                 preparedStatement.setString(1, person.getFirstName());
                 preparedStatement.setString(2, person.getLastName());
                 preparedStatement.setString(3, person.getDepartment());
-                preparedStatement.setString(4, person.getMajor());
+                preparedStatement.setString(4, person.getMajor().name());
                 preparedStatement.setString(5, person.getEmail());
                 preparedStatement.setString(6, person.getImageURL());
-                int row = preparedStatement.executeUpdate();
-                if (row > 0) {
-                    lg.makeLog("A new user was inserted successfully.");
+
+                try (ResultSet keys = preparedStatement.executeQuery()) {
+                    if (keys.next()) {
+                        return keys.getInt(1);
+                    }
                 }
-                preparedStatement.close();
-                conn.close();
             } catch (SQLException e) {
-                e.printStackTrace();
+                MyLogger.makeLog("Insert failed: " + e.getMessage());
             }
+            return -1;
         }
 
-        public void editUser(int id, Person p) {
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "UPDATE users SET first_name=?, last_name=?, department=?, major=?, email=?, imageURL=? WHERE id=?";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
-                preparedStatement.setString(1, p.getFirstName());
-                preparedStatement.setString(2, p.getLastName());
-                preparedStatement.setString(3, p.getDepartment());
-                preparedStatement.setString(4, p.getMajor());
-                preparedStatement.setString(5, p.getEmail());
-                preparedStatement.setString(6, p.getImageURL());
-                preparedStatement.setInt(7, id);
-                preparedStatement.executeUpdate();
-                preparedStatement.close();
-                conn.close();
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
+        String derbySql = "INSERT INTO users (first_name, last_name, department, major, email, imageURL) VALUES (?, ?, ?, ?, ?, ?)";
+        try (Connection conn = openConnection();
+             PreparedStatement preparedStatement = conn.prepareStatement(derbySql, Statement.RETURN_GENERATED_KEYS)) {
+
+            preparedStatement.setString(1, person.getFirstName());
+            preparedStatement.setString(2, person.getLastName());
+            preparedStatement.setString(3, person.getDepartment());
+            preparedStatement.setString(4, person.getMajor().name());
+            preparedStatement.setString(5, person.getEmail());
+            preparedStatement.setString(6, person.getImageURL());
+
+            int row = preparedStatement.executeUpdate();
+            if (row > 0) {
+                try (ResultSet keys = preparedStatement.getGeneratedKeys()) {
+                    if (keys.next()) {
+                        return keys.getInt(1);
+                    }
+                }
             }
+        } catch (SQLException e) {
+            MyLogger.makeLog("Insert failed: " + e.getMessage());
         }
 
-        public void deleteRecord(Person person) {
-            int id = person.getId();
-            connectToDatabase();
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "DELETE FROM users WHERE id=?";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
-                preparedStatement.setInt(1, id);
-                preparedStatement.executeUpdate();
-                preparedStatement.close();
-                conn.close();
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-        }
+        return -1;
+    }
 
-        //Method to retrieve id from database where it is auto-incremented.
-        public int retrieveId(Person p) {
-            connectToDatabase();
-            int id;
-            try {
-                Connection conn = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD);
-                String sql = "SELECT id FROM users WHERE email=?";
-                PreparedStatement preparedStatement = conn.prepareStatement(sql);
-                preparedStatement.setString(1, p.getEmail());
+    public boolean editUser(int id, Person person) {
+        connectToDatabase();
+        String sql = "UPDATE users SET first_name=?, last_name=?, department=?, major=?, email=?, imageURL=? WHERE id=?";
 
-                ResultSet resultSet = preparedStatement.executeQuery();
-                resultSet.next();
-                id = resultSet.getInt("id");
-                preparedStatement.close();
-                conn.close();
+        try (Connection conn = openConnection();
+             PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
 
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-            lg.makeLog(String.valueOf(id));
-            return id;
+            preparedStatement.setString(1, person.getFirstName());
+            preparedStatement.setString(2, person.getLastName());
+            preparedStatement.setString(3, person.getDepartment());
+            preparedStatement.setString(4, person.getMajor().name());
+            preparedStatement.setString(5, person.getEmail());
+            preparedStatement.setString(6, person.getImageURL());
+            preparedStatement.setInt(7, id);
+
+            return preparedStatement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            MyLogger.makeLog("Update failed: " + e.getMessage());
+            return false;
         }
     }
+
+    public boolean deleteRecord(Person person) {
+        connectToDatabase();
+        String sql = "DELETE FROM users WHERE id=?";
+
+        try (Connection conn = openConnection();
+             PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
+
+            preparedStatement.setInt(1, person.getId());
+            return preparedStatement.executeUpdate() > 0;
+        } catch (SQLException e) {
+            MyLogger.makeLog("Delete failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public int countByMajor(Major major) {
+        connectToDatabase();
+        String sql = "SELECT COUNT(*) FROM users WHERE major = ?";
+
+        try (Connection conn = openConnection();
+             PreparedStatement preparedStatement = conn.prepareStatement(sql)) {
+
+            preparedStatement.setString(1, major.name());
+            try (ResultSet resultSet = preparedStatement.executeQuery()) {
+                if (resultSet.next()) {
+                    return resultSet.getInt(1);
+                }
+            }
+        } catch (SQLException e) {
+            MyLogger.makeLog("Count by major failed: " + e.getMessage());
+        }
+
+        return 0;
+    }
+
+    public String getActiveDatabaseMode() {
+        return databaseMode.name();
+    }
+
+    private boolean initAzureSchema() throws SQLException {
+        String sql = "IF OBJECT_ID('dbo.users', 'U') IS NULL "
+                + "CREATE TABLE users ("
+                + "id INT IDENTITY(1,1) PRIMARY KEY,"
+                + "first_name NVARCHAR(200) NOT NULL,"
+                + "last_name NVARCHAR(200) NOT NULL,"
+                + "department NVARCHAR(200) NOT NULL,"
+                + "major NVARCHAR(20) NOT NULL CHECK (major IN ('CS','CPIS','ENGLISH')),"
+                + "email NVARCHAR(200) NOT NULL UNIQUE,"
+                + "imageURL NVARCHAR(300)"
+                + ")";
+
+        try (Connection conn = DriverManager.getConnection(azureJdbcUrl);
+             Statement statement = conn.createStatement()) {
+            statement.executeUpdate(sql);
+        }
+
+        return hasRows(true);
+    }
+
+    private boolean initDerbySchema() throws SQLException {
+        String sql = "CREATE TABLE users ("
+                + "id INT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1) PRIMARY KEY,"
+                + "first_name VARCHAR(200) NOT NULL,"
+                + "last_name VARCHAR(200) NOT NULL,"
+                + "department VARCHAR(200) NOT NULL,"
+                + "major VARCHAR(20) NOT NULL,"
+                + "email VARCHAR(200) NOT NULL UNIQUE,"
+                + "imageURL VARCHAR(300),"
+                + "CONSTRAINT major_allowed CHECK (major IN ('CS','CPIS','ENGLISH'))"
+                + ")";
+
+        try (Connection conn = DriverManager.getConnection(getDerbyUrl());
+             Statement statement = conn.createStatement()) {
+            if (!tableExists(conn, "USERS")) {
+                statement.executeUpdate(sql);
+            }
+        }
+
+        return hasRows(false);
+    }
+
+    private boolean hasRows(boolean azure) throws SQLException {
+        String countSql = "SELECT COUNT(*) FROM users";
+        try (Connection conn = azure
+                ? DriverManager.getConnection(azureJdbcUrl)
+                : DriverManager.getConnection(getDerbyUrl());
+             PreparedStatement preparedStatement = conn.prepareStatement(countSql);
+             ResultSet resultSet = preparedStatement.executeQuery()) {
+
+            return resultSet.next() && resultSet.getInt(1) > 0;
+        }
+    }
+
+    private boolean tableExists(Connection connection, String tableName) throws SQLException {
+        try (ResultSet resultSet = connection.getMetaData().getTables(null, null, tableName, null)) {
+            return resultSet.next();
+        }
+    }
+
+    private Connection openConnection() throws SQLException {
+        if (databaseMode == DatabaseMode.AZURE_SQL_SERVER) {
+            return DriverManager.getConnection(azureJdbcUrl);
+        }
+        return DriverManager.getConnection(getDerbyUrl());
+    }
+
+    private String getDerbyUrl() {
+        return "jdbc:derby:" + derbyPath + ";create=true";
+    }
+
+    private void ensureDriverLoaded() throws ClassNotFoundException {
+        if (databaseMode == DatabaseMode.AZURE_SQL_SERVER) {
+            Class.forName("com.microsoft.sqlserver.jdbc.SQLServerDriver");
+        } else {
+            Class.forName("org.apache.derby.jdbc.EmbeddedDriver");
+        }
+    }
+
+    private static DatabaseMode parseMode(String value) {
+        if ("AZURE".equalsIgnoreCase(value)
+                || "AZURE_SQL_SERVER".equalsIgnoreCase(value)
+                || "MSSQL".equalsIgnoreCase(value)
+                || "SQLSERVER".equalsIgnoreCase(value)) {
+            return DatabaseMode.AZURE_SQL_SERVER;
+        }
+        return DatabaseMode.DERBY;
+    }
+
+    private static String readConfig(String propertyKey, String envKey, String defaultValue) {
+        String fromProperty = System.getProperty(propertyKey);
+        if (fromProperty != null && !fromProperty.isBlank()) {
+            return fromProperty;
+        }
+
+        String fromEnv = System.getenv(envKey);
+        if (fromEnv != null && !fromEnv.isBlank()) {
+            return fromEnv;
+        }
+
+        return defaultValue;
+    }
+
+    private static String sanitizeConnectionString(String jdbc) {
+        if (jdbc == null) {
+            return "";
+        }
+        return jdbc.replace('“', '"')
+                .replace('”', '"')
+                .replace("\"", "")
+                .trim();
+    }
+}
